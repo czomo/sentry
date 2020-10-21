@@ -66,7 +66,7 @@ class JiraCloud(object):
 
 
 class JiraApiClient(ApiClient):
-    # TODO: Update to v3 endpoints
+    # TODO MARCOS: Update to v3 endpoints!
     COMMENTS_URL = "/rest/api/2/issue/%s/comment"
     COMMENT_URL = "/rest/api/2/issue/%s/comment/%s"
     STATUS_URL = "/rest/api/2/status"

@@ -18,6 +18,7 @@ from sentry.web.decorators import transaction_start
 MISSING_FEATURE_MESSAGE = "Your organization does not have access to this feature."
 
 
+# TODO MARCOS what is this endpoint?
 class GroupIntegrationDetailsEndpoint(GroupEndpoint):
     def _has_issue_feature(self, organization, user):
         has_issue_basic = features.has(

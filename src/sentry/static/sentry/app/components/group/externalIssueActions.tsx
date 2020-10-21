@@ -25,6 +25,8 @@ type State = AsyncComponent['state'] & {
   selectedIntegration: GroupIntegration;
   issue: IntegrationExternalIssue | null;
 };
+
+// TODO MARCOS FIRST this looks important
 class ExternalIssueActions extends AsyncComponent<Props, State> {
   static propTypes = {
     group: PropTypes.object.isRequired,

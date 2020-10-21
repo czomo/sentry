@@ -7,6 +7,7 @@ from collections import defaultdict
 from sentry.db.models import BoundedBigIntegerField, Model, sane_repr
 
 
+# TODO MARCOS what's the difference?
 class PlatformExternalIssue(Model):
     __core__ = False
 
