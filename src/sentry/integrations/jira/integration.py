@@ -16,18 +16,19 @@ from sentry.integrations import (
     IntegrationMetadata,
     FeatureDescription,
 )
+from sentry.integrations.issues import IssueSyncMixin
+from sentry.models import IntegrationExternalProject, Organization, OrganizationIntegration, User
 from sentry.shared_integrations.exceptions import (
     ApiUnauthorized,
     ApiError,
     IntegrationError,
     IntegrationFormError,
 )
-from sentry.integrations.issues import IssueSyncMixin
-from sentry.models import IntegrationExternalProject, Organization, OrganizationIntegration, User
-from sentry.utils.http import absolute_uri
 from sentry.utils.decorators import classproperty
+from sentry.utils.http import absolute_uri
 
 from .client import JiraApiClient, JiraCloud
+from .utils import get_issue_type_meta
 
 logger = logging.getLogger("sentry.integrations.jira")
 
@@ -193,50 +194,12 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
         return configuration
 
     def update_organization_config(self, data):
-        """
-        Update the configuration field for an organization integration.
-        """
-        config = self.org_integration.config
-
-        if "sync_status_forward" in data:
-            project_mappings = data.pop("sync_status_forward")
-
-            if any(
-                not mapping["on_unresolve"] or not mapping["on_resolve"]
-                for mapping in project_mappings.values()
-            ):
-                raise IntegrationError("Resolve and unresolve status are required.")
-
-            data["sync_status_forward"] = bool(project_mappings)
-
-            IntegrationExternalProject.objects.filter(
-                organization_integration_id=self.org_integration.id
-            ).delete()
-
-            for project_id, statuses in project_mappings.items():
-                IntegrationExternalProject.objects.create(
-                    organization_integration_id=self.org_integration.id,
-                    external_id=project_id,
-                    resolved_status=statuses["on_resolve"],
-                    unresolved_status=statuses["on_unresolve"],
-                )
-
-        config.update(data)
-        self.org_integration.update(config=config)
+        self._sync_status_forward(data)
+        super(JiraIntegration, self).update_organization_config(data)
 
     def get_config_data(self):
-        config = self.org_integration.config
-        project_mappings = IntegrationExternalProject.objects.filter(
-            organization_integration_id=self.org_integration.id
-        )
-        sync_status_forward = {}
-        for pm in project_mappings:
-            sync_status_forward[pm.external_id] = {
-                "on_unresolve": pm.unresolved_status,
-                "on_resolve": pm.resolved_status,
-            }
-        config["sync_status_forward"] = sync_status_forward
-        return config
+        config = super(JiraIntegration, self).get_config_data()
+        return self._add_sync_status_forward(config)
 
     def sync_metadata(self):
         client = self.get_client()
@@ -258,6 +221,7 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
 
         self.model.save()
 
+    # TODO MARCOS need to decide LINK or CREATE
     def get_link_issue_config(self, group, **kwargs):
         fields = super(JiraIntegration, self).get_link_issue_config(group, **kwargs)
         org = group.organization
@@ -331,10 +295,14 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
             self.raise_error(e)
 
     def make_choices(self, values):
-        if not values:
-            return []
+        """
+        TODO DESCRIBE
+
+        :param values:
+        :return:
+        """
         results = []
-        for item in values:
+        for item in values or []:
             key = item.get("id", None)
             if "name" in item:
                 value = item["name"]
@@ -374,6 +342,7 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
         """
         return reverse("sentry-extensions-jira-search", args=[org_slug, self.model.id])
 
+    # TODO MARCOS 2.0 dynamic fields
     def build_dynamic_field(self, group, field_meta):
         """
         Builds a field based on Jira's meta field information
@@ -425,19 +394,6 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
 
         fkwargs["type"] = fieldtype
         return fkwargs
-
-    def get_issue_type_meta(self, issue_type, meta):
-        issue_types = meta["issuetypes"]
-        issue_type_meta = None
-        if issue_type:
-            matching_type = [t for t in issue_types if t["id"] == issue_type]
-            issue_type_meta = matching_type[0] if len(matching_type) > 0 else None
-
-        # still no issue type? just use the first one.
-        if not issue_type_meta:
-            issue_type_meta = issue_types[0]
-
-        return issue_type_meta
 
     def get_issue_create_meta(self, client, project_id, jira_projects):
         if project_id:
@@ -504,12 +460,27 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
             )
         return meta
 
+    # TODO MARCOS FIRST
+    # TODO figure out if i can reuse this
+    # TODO make sure this has NO side effects
+    # TODO pass in params with the project_id as project
     def get_create_issue_config(self, group, **kwargs):
-        kwargs["link_referrer"] = "jira_integration"
-        fields = super(JiraIntegration, self).get_create_issue_config(group, **kwargs)
-        params = kwargs.get("params", {})
+        """
+        TODO DESCRIBE
 
-        defaults = self.get_project_defaults(group.project_id)
+        :param group: Optional.
+        :param kwargs:
+        :return:
+        """
+
+        fields = []
+        defaults = {}
+        if group:
+            kwargs["link_referrer"] = "jira_integration"
+            fields += super(JiraIntegration, self).get_create_issue_config(group, **kwargs)
+            defaults = self.get_project_defaults(group.project_id)
+
+        params = kwargs.get("params", {})
         project_id = params.get("project", defaults.get("project"))
         client = self.get_client()
         try:
@@ -537,7 +508,7 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
 
         # check if the issuetype was passed as a parameter
         issue_type = params.get("issuetype", defaults.get("issuetype"))
-        issue_type_meta = self.get_issue_type_meta(issue_type, meta)
+        issue_type_meta = get_issue_type_meta(issue_type, meta)
         issue_type_choices = self.make_choices(meta["issuetypes"])
 
         # make sure default issue type is actually
@@ -628,7 +599,7 @@ class JiraIntegration(IntegrationInstallation, IssueSyncMixin):
         if not meta:
             raise IntegrationError("Could not fetch issue create configuration from Jira.")
 
-        issue_type_meta = self.get_issue_type_meta(data["issuetype"], meta)
+        issue_type_meta = get_issue_type_meta(data["issuetype"], meta)
         user_id_field = client.user_id_field()
 
         fs = issue_type_meta["fields"]

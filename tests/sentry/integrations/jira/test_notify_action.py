@@ -4,7 +4,7 @@ import responses
 
 from sentry.integrations.jira import JiraCreateTicketAction
 from sentry.models import Integration
-from sentry.testutils.cases import RuleTestCase
+from sentry.testutils.cases import RugleTestCase
 from sentry.utils import json
 
 # external_id is the account name in pagerduty

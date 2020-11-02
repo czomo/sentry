@@ -1,5 +1,7 @@
 from __future__ import absolute_import, print_function
 
+from django import forms
+
 from sentry.constants import ObjectStatus
 from sentry.models.integration import Integration
 from sentry.rules.base import RuleBase
@@ -65,7 +67,7 @@ class IntegrationEventAction(EventAction):
         :raises: Integration.DoesNotExist
         :return: Integration
         """
-        return Integration.objects.filter(
+        return Integration.objects.get(
             id=self.get_option(self.integration_key),
             provider=self.provider,
             organizations=self.project.organization,
@@ -74,3 +76,8 @@ class IntegrationEventAction(EventAction):
 
     def get_form_instance(self):
         return self.form_cls(self.data, integrations=self.get_integrations())
+
+
+class IntegrationActionServiceForm(forms.Form):
+    def a(self):
+        pass
