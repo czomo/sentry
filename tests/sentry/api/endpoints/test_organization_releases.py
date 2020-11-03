@@ -1324,6 +1324,7 @@ class ReleaseSerializerWithProjectsTest(TestCase):
                 "headCommits",
                 "refs",
                 "projects",
+                "status",
             ]
         )
         result = serializer.validated_data
