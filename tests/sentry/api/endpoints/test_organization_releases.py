@@ -1313,18 +1313,19 @@ class ReleaseSerializerWithProjectsTest(TestCase):
         )
 
         assert serializer.is_valid(), serializer.errors
-        assert set(serializer.fields.keys()) == {
-            "version",
-            "owner",
-            "ref",
-            "url",
-            "dateReleased",
-            "commits",
-            "headCommits",
-            "refs",
-            "status",
-            "projects",
-        }
+        assert sorted(serializer.fields.keys()) == sorted(
+            [
+                "version",
+                "owner",
+                "ref",
+                "url",
+                "dateReleased",
+                "commits",
+                "headCommits",
+                "refs",
+                "projects",
+            ]
+        )
         result = serializer.validated_data
         assert result["version"] == self.version
         assert result["owner"] == self.user

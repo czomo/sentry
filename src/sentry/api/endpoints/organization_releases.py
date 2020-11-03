@@ -8,8 +8,6 @@ from django.db.models.functions import Coalesce
 from rest_framework.response import Response
 from rest_framework.exceptions import ParseError
 
-import sentry_sdk
-
 from sentry import analytics
 
 from sentry.api.bases import NoProjects
@@ -34,7 +32,7 @@ from sentry.snuba.sessions import (
 )
 from sentry.utils.cache import cache
 from sentry.utils.compat import zip as izip
-from sentry.utils.sdk import bind_organization_context
+from sentry.utils.sdk import configure_scope, bind_organization_context
 from sentry.web.decorators import transaction_start
 
 
@@ -298,114 +296,117 @@ class OrganizationReleasesEndpoint(OrganizationReleasesBaseEndpoint, Environment
         bind_organization_context(organization)
         serializer = ReleaseSerializerWithProjects(data=request.data)
 
-        if serializer.is_valid():
-            result = serializer.validated_data
-            sentry_sdk.set_tag("version", result["version"])
+        with configure_scope() as scope:
+            if serializer.is_valid():
+                result = serializer.validated_data
+                scope.set_tag("version", result["version"])
 
-            allowed_projects = {p.slug: p for p in self.get_projects(request, organization)}
+                allowed_projects = {p.slug: p for p in self.get_projects(request, organization)}
 
-            projects = []
-            for slug in result["projects"]:
-                if slug not in allowed_projects:
-                    return Response({"projects": ["Invalid project slugs"]}, status=400)
-                projects.append(allowed_projects[slug])
+                projects = []
+                for slug in result["projects"]:
+                    if slug not in allowed_projects:
+                        return Response({"projects": ["Invalid project slugs"]}, status=400)
+                    projects.append(allowed_projects[slug])
 
-            new_status = result.get("status")
+                new_status = result.get("status")
 
-            # release creation is idempotent to simplify user
-            # experiences
-            try:
-                with transaction.atomic():
-                    release, created = (
-                        Release.objects.create(
-                            organization_id=organization.id,
-                            version=result["version"],
-                            ref=result.get("ref"),
-                            url=result.get("url"),
-                            owner=result.get("owner"),
-                            date_released=result.get("dateReleased"),
-                            status=new_status or ReleaseStatus.OPEN,
-                        ),
-                        True,
-                    )
-            except IntegrityError:
-                release, created = (
-                    Release.objects.get(organization_id=organization.id, version=result["version"]),
-                    False,
-                )
-            else:
-                release_created.send_robust(release=release, sender=self.__class__)
-
-            if not created and new_status is not None and new_status != release.status:
-                release.status = new_status
-                release.save()
-
-            new_projects = []
-            for project in projects:
-                created = release.add_project(project)
-                if created:
-                    new_projects.append(project)
-
-            if release.date_released:
-                for project in new_projects:
-                    Activity.objects.create(
-                        type=Activity.RELEASE,
-                        project=project,
-                        ident=Activity.get_version_ident(result["version"]),
-                        data={"version": result["version"]},
-                        datetime=release.date_released,
-                    )
-
-            commit_list = result.get("commits")
-            if commit_list:
-                release.set_commits(commit_list)
-
-            refs = result.get("refs")
-            if not refs:
-                refs = [
-                    {
-                        "repository": r["repository"],
-                        "previousCommit": r.get("previousId"),
-                        "commit": r["currentId"],
-                    }
-                    for r in result.get("headCommits", [])
-                ]
-            sentry_sdk.set_tag("has_refs", bool(refs))
-            if refs:
-                if not request.user.is_authenticated():
-                    sentry_sdk.set_tag("failure_reason", "user_not_authenticated")
-                    return Response(
-                        {"refs": ["You must use an authenticated API token to fetch refs"]},
-                        status=400,
-                    )
-                fetch_commits = not commit_list
+                # release creation is idempotent to simplify user
+                # experiences
                 try:
-                    release.set_refs(refs, request.user, fetch=fetch_commits)
-                except InvalidRepository as e:
-                    sentry_sdk.set_tag("failure_reason", "InvalidRepository")
-                    return Response({"refs": [six.text_type(e)]}, status=400)
+                    with transaction.atomic():
+                        release, created = (
+                            Release.objects.create(
+                                organization_id=organization.id,
+                                version=result["version"],
+                                ref=result.get("ref"),
+                                url=result.get("url"),
+                                owner=result.get("owner"),
+                                date_released=result.get("dateReleased"),
+                                status=new_status or ReleaseStatus.OPEN,
+                            ),
+                            True,
+                        )
+                except IntegrityError:
+                    release, created = (
+                        Release.objects.get(
+                            organization_id=organization.id, version=result["version"]
+                        ),
+                        False,
+                    )
+                else:
+                    release_created.send_robust(release=release, sender=self.__class__)
 
-            if not created and not new_projects:
-                # This is the closest status code that makes sense, and we want
-                # a unique 2xx response code so people can understand when
-                # behavior differs.
-                #   208 Already Reported (WebDAV; RFC 5842)
-                status = 208
-            else:
-                status = 201
+                if not created and new_status is not None and new_status != release.status:
+                    release.status = new_status
+                    release.save()
 
-            analytics.record(
-                "release.created",
-                user_id=request.user.id if request.user and request.user.id else None,
-                organization_id=organization.id,
-                project_ids=[project.id for project in projects],
-                user_agent=request.META.get("HTTP_USER_AGENT", ""),
-                created_status=status,
-            )
-            sentry_sdk.set_tag("success_status", status)
-            return Response(serialize(release, request.user), status=status)
-        sentry_sdk.set_tag("failure_reason", "serializer_error")
-        return Response(serializer.errors, status=400)
+                new_projects = []
+                for project in projects:
+                    created = release.add_project(project)
+                    if created:
+                        new_projects.append(project)
+
+                if release.date_released:
+                    for project in new_projects:
+                        Activity.objects.create(
+                            type=Activity.RELEASE,
+                            project=project,
+                            ident=Activity.get_version_ident(result["version"]),
+                            data={"version": result["version"]},
+                            datetime=release.date_released,
+                        )
+
+                commit_list = result.get("commits")
+                if commit_list:
+                    release.set_commits(commit_list)
+
+                refs = result.get("refs")
+                if not refs:
+                    refs = [
+                        {
+                            "repository": r["repository"],
+                            "previousCommit": r.get("previousId"),
+                            "commit": r["currentId"],
+                        }
+                        for r in result.get("headCommits", [])
+                    ]
+                scope.set_tag("has_refs", bool(refs))
+                if refs:
+                    if not request.user.is_authenticated():
+                        scope.set_tag("failure_reason", "user_not_authenticated")
+                        return Response(
+                            {"refs": ["You must use an authenticated API token to fetch refs"]},
+                            status=400,
+                        )
+                    fetch_commits = not commit_list
+                    try:
+                        release.set_refs(refs, request.user, fetch=fetch_commits)
+                    except InvalidRepository as e:
+                        scope.set_tag("failure_reason", "InvalidRepository")
+                        return Response({"refs": [six.text_type(e)]}, status=400)
+
+                if not created and not new_projects:
+                    # This is the closest status code that makes sense, and we want
+                    # a unique 2xx response code so people can understand when
+                    # behavior differs.
+                    #   208 Already Reported (WebDAV; RFC 5842)
+                    status = 208
+                else:
+                    status = 201
+
+                analytics.record(
+                    "release.created",
+                    user_id=request.user.id if request.user and request.user.id else None,
+                    organization_id=organization.id,
+                    project_ids=[project.id for project in projects],
+                    user_agent=request.META.get("HTTP_USER_AGENT", ""),
+                    created_status=status,
+                )
+                scope.set_tag("success_status", status)
+                return Response(serialize(release, request.user), status=status)
+            scope.set_tag("failure_reason", "serializer_error")
+            return Response(serializer.errors, status=400)
 
 
 class OrganizationReleasesStatsEndpoint(OrganizationReleasesBaseEndpoint, EnvironmentMixin):
