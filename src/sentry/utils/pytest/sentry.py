@@ -150,6 +150,7 @@ def pytest_configure(config):
             'slack.client-id': 'slack-client-id',
             'slack.client-secret': 'slack-client-secret',
             'slack.verification-token': 'slack-verification-token',
+            "slack.legacy-app": True,
 
             'github-app.name': 'sentry-test-app',
             'github-app.client-id': 'github-client-id',

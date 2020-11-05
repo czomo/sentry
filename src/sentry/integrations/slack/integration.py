@@ -75,13 +75,17 @@ class SlackIntegrationProvider(IntegrationProvider):
         'links:read',
         'links:write',
     ]) if not settings.SLACK_INTEGRATION_USE_WST else frozenset([
-        'channels:read',
-        'groups:read',
-        'users:read',
-        'chat:write',
-        'links:read',
-        'links:write',
-        'team:read',
+        "channels:read",
+        "groups:read",
+        "users:read",
+        "chat:write",
+        "links:read",
+        "links:write",
+        "team:read",
+        "chat:write.public",
+        "chat:write.customize",
+        "im:read",
+        "mpim:read",
     ])
 
     setup_dialog_config = {
